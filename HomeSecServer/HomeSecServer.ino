@@ -66,6 +66,7 @@
 #include "utility/socket.h"
 #include "DHT.h"
 #include <ArduinoJson.h>
+#include <XBee.h>
 
 // DHT11 sensor pins
 #define DHTPIN 47
@@ -131,13 +132,18 @@ String title = "Home";
 String email = "email@email.com";
 String phoneNumber = "111-111-1111";
 
-int numDoorNodes = 4;
-int numCameraNodes = 2;
-int doorNodes[MAX_DOORS] = {1, 2, 3, 4};
-String cameraNodes[MAX_CAMERAS] = {"1", "2"};
+int numDoorNodes;
+int numCameraNodes = 0;
+int doorNodes[MAX_DOORS];
+String cameraNodes[MAX_CAMERAS];
+uint64_t serial_nums [MAX_DOORS];
 
 DynamicJsonBuffer jsonBuffer;
 JsonObject& root = jsonBuffer.createObject();
+
+XBee xbee = XBee();
+ZBRxIoSampleResponse ioSample = ZBRxIoSampleResponse();
+XBeeAddress64 test = XBeeAddress64();
 
 //----------------------------------------------------------------------------------------
 // setup
@@ -148,15 +154,17 @@ JsonObject& root = jsonBuffer.createObject();
 
 void setup(void)
 {
-  Serial.begin(115200);
-  Serial.println(F("Hello, CC3000!\n"));
+  Serial.begin(9600);
+  Serial1.begin(9600);
+  xbee.setSerial(Serial1);
+  Serial.println(F("Hello, CC3000!\n")); 
 
   Serial.print("Free RAM: "); Serial.println(getFreeRam(), DEC);
 
   // Initialize DHT sensor
   Serial.println(F("\nInitialize DHT Sensor"));
   dht.begin();
-
+  
   // Initialise the module
   Serial.println(F("\nInitializing..."));
   if (!cc3000.begin())
@@ -164,29 +172,31 @@ void setup(void)
     Serial.println(F("Couldn't begin()! Check your wiring?"));
     while(1);
   }
-
+  
   Serial.print(F("\nAttempting to connect to ")); Serial.println(WLAN_SSID);
   if (!cc3000.connectToAP(WLAN_SSID, WLAN_PASS, WLAN_SECURITY)) {
     Serial.println(F("Failed!"));
     while(1);
   }
-
+   
   Serial.println(F("Connected!"));
-
+  
   Serial.println(F("Request DHCP"));
   while (!cc3000.checkDHCP())
   {
     delay(100); // ToDo: Insert a DHCP timeout!
-  }
+  }  
 
   // Display the IP address DNS, Gateway, etc.
   while (! displayConnectionDetails()) {
     delay(1000);
   }
 
+  numDoorNodes = 0;
+  
   // Start listening for connections
   httpServer.begin();
-
+  
   Serial.println(F("Listening for connections..."));
 }
 
@@ -201,14 +211,15 @@ void loop(void)
 {
 
   // Update data
+  XBeeComsLoop();
 
   // Measure from DHT
   temperature = (uint8_t)dht.readTemperature();
   humidity = (uint8_t)dht.readHumidity();
 
   // Build json object
-  buildStatus();
-
+  //buildStatus();
+  
   // Try to get a client which is connected.
   Adafruit_CC3000_ClientRef client = httpServer.available();
   if (client) {
@@ -219,14 +230,14 @@ void loop(void)
     // Clear the incoming data buffer and point to the beginning of it.
     bufindex = 0;
     memset(&buffer, 0, sizeof(buffer));
-
+    
     // Clear action and path strings.
     memset(&action, 0, sizeof(action));
     memset(&path,   0, sizeof(path));
 
     // Set a timeout for reading all the incoming data.
     unsigned long endtime = millis() + TIMEOUT_MS;
-
+    
     // Read all the incoming data until it can be parsed or the timeout expires.
     bool parsed = false;
     while (!parsed && (millis() < endtime) && (bufindex < BUFFER_SIZE)) {
@@ -256,10 +267,7 @@ void loop(void)
         // Now send the response data.
         parsePath(path);
         buildStatus();
-        char jsonStatus[256];
-        root.printTo(jsonStatus, 256);
-        client.fastrprintln(jsonStatus);
-        client.fastrprint(F("You accessed path: ")); client.fastrprintln(path);
+        root.printTo(client);
       }
       else {
         // Unsupported action, respond with an HTTP 405 method not allowed error.
@@ -270,11 +278,76 @@ void loop(void)
 
     // Wait a short period to make sure the response had time to send before
     // the connection is closed (the CC3000 sends data asyncronously).
-    delay(100);
+    delay(150);
 
     // Close the connection when done.
     Serial.println(F("Client disconnected"));
     client.close();
+  }
+}
+
+//----------------------------------------------------------------------------------------
+// XBeeComsLoop
+// Description: Parse the Xbee responses
+// Parameters: none
+// Return: none
+//----------------------------------------------------------------------------------------
+void XBeeComsLoop() {
+
+  //attempt to read a packet    
+  xbee.readPacket();
+
+  if (xbee.getResponse().isAvailable()) {
+    // got something
+
+    if (xbee.getResponse().getApiId() == ZB_IO_SAMPLE_RESPONSE) {
+      xbee.getResponse().getZBRxIoSampleResponse(ioSample);
+
+      uint64_t serialMSB = ioSample.getRemoteAddress64().getMsb();
+      uint64_t serialLSB = ioSample.getRemoteAddress64().getLsb();
+      uint64_t serial_num = (serialMSB << 32) | serialLSB; 
+
+      // read analog inputs
+      for (int i = 0; i <= 4; i++) {
+        if (ioSample.isAnalogEnabled(i)) {
+
+          int doorStatus = 0;
+          if (ioSample.getAnalog(i) > 0) {
+            doorStatus = 1;
+          }
+
+          // Search for serial_num or a location to use
+          uint8_t empty = 0;
+          bool filled = 0;
+          for (int i = 0; i < MAX_DOORS; i++) {
+            if (serial_nums[i] == serial_num) {
+              doorNodes[i] = doorStatus;
+              filled = 1;
+            } else if (serial_nums[i] == 0) {
+              empty = i;
+            }
+         }
+
+          // Didn't find a slot
+          if (!filled) {
+            serial_nums[empty] = serial_num;
+            doorNodes[empty] = doorStatus;
+            numDoorNodes++;
+            //Serial.print("Inserting New Door Node\n\n\n\n\n");
+          }
+          //Serial.print("Door Status\n");
+          //Serial.println(doorStatus, BIN);
+          //Serial.print("\n");
+        }
+      }
+    } 
+    else {
+      Serial.print("Expected I/O Sample, but got ");
+      Serial.print(xbee.getResponse().getApiId(), HEX);
+    }    
+  } else if (xbee.getResponse().isError()) {
+    Serial.print("Error reading packet.  Error code: ");  
+    Serial.println(xbee.getResponse().getErrorCode());
   }
 }
 
@@ -317,7 +390,6 @@ void parseFirstLine(char* line, char* action, char* path) {
 // Parameters: path the full path
 // Return: none
 //----------------------------------------------------------------------------------------
-
 void parsePath(char* path){
   String str(path);
   if (str.indexOf("status") >= 0) {
@@ -325,7 +397,7 @@ void parsePath(char* path){
       String command(path + str.indexOf("?") + 1);
     }
     else {
-
+      
     }
   }
   else if (str.indexOf("testdoornode") >= 0) {
@@ -385,7 +457,7 @@ void parsePath(char* path){
 bool displayConnectionDetails(void)
 {
   uint32_t ipAddress, netmask, gateway, dhcpserv, dnsserv;
-
+  
   if(!cc3000.getIPAddress(&ipAddress, &netmask, &gateway, &dhcpserv, &dnsserv))
   {
     Serial.println(F("Unable to retrieve the IP Address!\r\n"));
@@ -409,7 +481,6 @@ bool displayConnectionDetails(void)
 // Parameters: none
 // Return: none
 //----------------------------------------------------------------------------------------
-
 void buildStatus(void) {
 
   root["title"] = title;
@@ -422,16 +493,12 @@ void buildStatus(void) {
   for (int i = 0; i < numDoorNodes; i++) {
     door.add(doorNodes[i]);
   }
-
+  
   JsonArray& camera = root.createNestedArray("camera");
 
   for (int i = 0; i < numCameraNodes; i++) {
     camera.add(cameraNodes[i]);
   }
-
-  root.printTo(Serial);
-  Serial.println("\n");
-  delay(1000);
 }
 
 //----------------------------------------------------------------------------------------
@@ -440,7 +507,6 @@ void buildStatus(void) {
 // Parameters: command arguments
 // Return: pass or fail
 //----------------------------------------------------------------------------------------
-
 int testDoorNode(String command) {
   Serial.print(F("\nTest Door Node: "));Serial.println(command);
   return 0;
@@ -452,7 +518,6 @@ int testDoorNode(String command) {
 // Parameters: command arguments
 // Return: pass or fail
 //----------------------------------------------------------------------------------------
-
 int testCameraNode(String command) {
   Serial.print(F("\nTest Camera Node: "));Serial.println(command);
   return 0;
@@ -464,7 +529,6 @@ int testCameraNode(String command) {
 // Parameters: command arguments
 // Return: pass or fail
 //----------------------------------------------------------------------------------------
-
 int resetSystem(String command) {
   Serial.print(F("\nReset System: "));Serial.println(command);
   return 0;
@@ -476,7 +540,6 @@ int resetSystem(String command) {
 // Parameters: command arguments
 // Return: pass or fail
 //----------------------------------------------------------------------------------------
-
 int editEmail(String command) {
   Serial.print(F("\nEdit Email: "));Serial.println(command);
   return 0;
@@ -488,7 +551,6 @@ int editEmail(String command) {
 // Parameters: command arguments
 // Return: pass or fail
 //----------------------------------------------------------------------------------------
-
 int editPhoneNumber(String command) {
   Serial.print(F("\nEdit Phone Number: "));Serial.println(command);
   return 0;
