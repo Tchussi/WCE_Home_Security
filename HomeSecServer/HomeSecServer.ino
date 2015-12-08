@@ -67,6 +67,10 @@
 #include "DHT.h"
 #include <ArduinoJson.h>
 #include <XBee.h>
+#include <SD.h>
+#include <Adafruit_VC0706.h>
+#include <SPI.h>
+#include <SoftwareSerial.h>  
 
 // DHT11 sensor pins
 #define DHTPIN 47
@@ -117,8 +121,23 @@ Adafruit_CC3000 cc3000 = Adafruit_CC3000(ADAFRUIT_CC3000_CS, ADAFRUIT_CC3000_IRQ
 
 // Max number of door and camera nodes.
 #define MAX_DOORS 10
-#define MAX_CAMERAS 10
+#define MAX_CAMERAS 1
 
+// SD card chip select
+#define chipSelect 45
+
+// Using SoftwareSerial (Arduino 1.0+) or NewSoftSerial (Arduino 0023 & prior):
+#if ARDUINO >= 100
+// On Uno: camera TX connected to pin 2, camera RX to pin 3:
+SoftwareSerial cameraconnection = SoftwareSerial(16, 17);
+// On Mega: camera TX connected to pin 69 (A15), camera RX to pin 3:
+//SoftwareSerial cameraconnection = SoftwareSerial(69, 3);
+#else
+NewSoftSerial cameraconnection = NewSoftSerial(16, 17);
+#endif
+Adafruit_VC0706 cam = Adafruit_VC0706(&cameraconnection);
+
+// HTTP Server
 Adafruit_CC3000_Server httpServer(LISTEN_PORT);
 uint8_t buffer[BUFFER_SIZE+1];
 int bufindex = 0;
@@ -138,9 +157,11 @@ int doorNodes[MAX_DOORS];
 String cameraNodes[MAX_CAMERAS];
 uint64_t serial_nums [MAX_DOORS];
 
+// JSON
 DynamicJsonBuffer jsonBuffer;
 JsonObject& root = jsonBuffer.createObject();
 
+// XBee Coms
 XBee xbee = XBee();
 ZBRxIoSampleResponse ioSample = ZBRxIoSampleResponse();
 XBeeAddress64 test = XBeeAddress64();
@@ -194,6 +215,79 @@ void setup(void)
 
   numDoorNodes = 0;
   
+  // When using hardware SPI, the SS pin MUST be set to an
+  // output (even if not connected or used).  If left as a
+  // floating input w/SPI on, this can cause lockuppage.
+#if !defined(SOFTWARE_SPI)
+#if defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
+  if(chipSelect != 53) pinMode(53, OUTPUT); // SS on Mega
+#else
+  if(chipSelect != 10) pinMode(10, OUTPUT); // SS on Uno, etc.
+#endif
+#endif
+
+  Serial.println("VC0706 Camera test");
+  pinMode(chipSelect, OUTPUT);
+  
+  // Set SD card on WiFi off
+  digitalWrite(ADAFRUIT_CC3000_CS, HIGH);
+  digitalWrite(chipSelect, LOW);
+  
+  // see if the card is present and can be initialized:
+  if (!SD.begin(chipSelect)) {
+    Serial.println("Card failed, or not present");
+    // don't do anything more:
+    return;
+  }  
+  
+  // Set SD card off WiFi on
+  digitalWrite(chipSelect, HIGH);
+  digitalWrite(ADAFRUIT_CC3000_CS, LOW);
+  
+  
+  // Try to locate the camera
+  if (cam.begin()) {
+    Serial.println("Camera Found:");
+  } else {
+    Serial.println("No camera found?");
+    return;
+  }
+  // Print out the camera version information (optional)
+  char *reply = cam.getVersion();
+  if (reply == 0) {
+    Serial.print("Failed to get version");
+  } else {
+    Serial.println("-----------------");
+    Serial.print(reply);
+    Serial.println("-----------------");
+  }
+
+  // Set the picture size - you can choose one of 640x480, 320x240 or 160x120 
+  // Remember that bigger pictures take longer to transmit!
+  
+  //cam.setImageSize(VC0706_640x480);        // biggest
+  cam.setImageSize(VC0706_320x240);        // medium
+  //cam.setImageSize(VC0706_160x120);          // small
+
+  // You can read the size back from the camera (optional, but maybe useful?)
+  uint8_t imgsize = cam.getImageSize();
+  Serial.print("Image size: ");
+  if (imgsize == VC0706_640x480) Serial.println("640x480");
+  if (imgsize == VC0706_320x240) Serial.println("320x240");
+  if (imgsize == VC0706_160x120) Serial.println("160x120");
+
+
+  //  Motion detection system can alert you when the camera 'sees' motion!
+  cam.setMotionDetect(true);           // turn it on
+  //cam.setMotionDetect(false);        // turn it off   (default)
+
+  // You can also verify whether motion detection is active!
+  Serial.print("Motion detection is ");
+  if (cam.getMotionDetect()) 
+    Serial.println("ON");
+  else 
+    Serial.println("OFF");
+  
   // Start listening for connections
   httpServer.begin();
   
@@ -217,8 +311,8 @@ void loop(void)
   temperature = (uint8_t)dht.readTemperature();
   humidity = (uint8_t)dht.readHumidity();
 
-  // Build json object
-  //buildStatus();
+  // Update the Camera
+  CameraComsLoop();
   
   // Try to get a client which is connected.
   Adafruit_CC3000_ClientRef client = httpServer.available();
@@ -284,6 +378,68 @@ void loop(void)
     Serial.println(F("Client disconnected"));
     client.close();
   }
+}
+
+//----------------------------------------------------------------------------------------
+// CameraComsLoop
+// Description: Parse the Camera responses
+// Parameters: none
+// Return: none
+//----------------------------------------------------------------------------------------
+void CameraComsLoop() {
+    if (cam.motionDetected()) {
+        Serial.println("Motion!");   
+        cam.setMotionDetect(false);
+    
+        if (! cam.takePicture()) 
+            Serial.println("Failed to snap!");
+        else 
+            Serial.println("Picture taken!");
+    
+        // Set SD card on WiFi off
+        digitalWrite(ADAFRUIT_CC3000_CS, HIGH);
+        digitalWrite(chipSelect, LOW);
+        
+        char filename[13];
+        strcpy(filename, "IMAGE00.JPG");
+        for (int i = 0; i < 100; i++) {
+            filename[5] = '0' + i/10;
+            filename[6] = '0' + i%10;
+            // create if does not exist, do not open existing, write, sync after write
+            if (! SD.exists(filename)) {
+            break;
+            }
+        }
+        
+        File imgFile = SD.open(filename, FILE_WRITE);
+        
+        uint16_t jpglen = cam.frameLength();
+        Serial.print(jpglen, DEC);
+        Serial.println(" byte image");
+        
+        Serial.print("Writing image to "); Serial.print(filename);
+        
+        while (jpglen > 0) {
+            // read 32 bytes at a time;
+            uint8_t *buffer;
+            uint8_t bytesToRead = min(32, jpglen); // change 32 to 64 for a speedup but may not work with all setups!
+            buffer = cam.readPicture(bytesToRead);
+            imgFile.write(buffer, bytesToRead);
+        
+            //Serial.print("Read ");  Serial.print(bytesToRead, DEC); Serial.println(" bytes");
+        
+            jpglen -= bytesToRead;
+        }
+        imgFile.close();
+        
+        // Set SD card off WiFi on
+        digitalWrite(chipSelect, HIGH);
+        digitalWrite(ADAFRUIT_CC3000_CS, LOW);
+        
+        Serial.println("...Done!");
+        cam.resumeVideo();
+        cam.setMotionDetect(true);
+    }  
 }
 
 //----------------------------------------------------------------------------------------
