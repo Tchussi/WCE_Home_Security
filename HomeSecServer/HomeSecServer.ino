@@ -90,8 +90,8 @@ DHT dht(DHTPIN, DHTTYPE);
 Adafruit_CC3000 cc3000 = Adafruit_CC3000(ADAFRUIT_CC3000_CS, ADAFRUIT_CC3000_IRQ, ADAFRUIT_CC3000_VBAT,
                                          SPI_CLOCK_DIVIDER);
 
-#define WLAN_SSID       "WCE_wifi"   // cannot be longer than 32 characters!
-#define WLAN_PASS       "password"
+#define WLAN_SSID       ""   // cannot be longer than 32 characters!
+#define WLAN_PASS       ""
 
 // Security can be WLAN_SEC_UNSEC, WLAN_SEC_WEP, WLAN_SEC_WPA or WLAN_SEC_WPA2
 #define WLAN_SECURITY   WLAN_SEC_WPA2
@@ -126,16 +126,7 @@ Adafruit_CC3000 cc3000 = Adafruit_CC3000(ADAFRUIT_CC3000_CS, ADAFRUIT_CC3000_IRQ
 // SD card chip select
 #define chipSelect 45
 
-// Using SoftwareSerial (Arduino 1.0+) or NewSoftSerial (Arduino 0023 & prior):
-#if ARDUINO >= 100
-// On Uno: camera TX connected to pin 2, camera RX to pin 3:
-SoftwareSerial cameraconnection = SoftwareSerial(16, 17);
-// On Mega: camera TX connected to pin 69 (A15), camera RX to pin 3:
-//SoftwareSerial cameraconnection = SoftwareSerial(69, 3);
-#else
-NewSoftSerial cameraconnection = NewSoftSerial(16, 17);
-#endif
-Adafruit_VC0706 cam = Adafruit_VC0706(&cameraconnection);
+Adafruit_VC0706 cam = Adafruit_VC0706(&Serial2);
 
 // HTTP Server
 Adafruit_CC3000_Server httpServer(LISTEN_PORT);
@@ -644,16 +635,11 @@ void buildStatus(void) {
   root["temperature"] = temperature;
   root["email"] = email;
   root["phone"] = phoneNumber;
+  root["camera"] = "0";
   JsonArray& door = root.createNestedArray("door");
 
   for (int i = 0; i < numDoorNodes; i++) {
     door.add(doorNodes[i]);
-  }
-  
-  JsonArray& camera = root.createNestedArray("camera");
-
-  for (int i = 0; i < numCameraNodes; i++) {
-    camera.add(cameraNodes[i]);
   }
 }
 

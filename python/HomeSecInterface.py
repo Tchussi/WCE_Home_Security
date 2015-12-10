@@ -56,6 +56,7 @@ topframe["background"] = "black"
 homeAlive = 1
 
 doorSecLogo = ImageTk.PhotoImage(Image.open("door.jpg"))
+cameraSecLogo = ImageTk.PhotoImage(Image.open("camera.jpg"))
 
 #------------------------------------------------------------------------------
 # Create the top frame (Home)
@@ -64,12 +65,22 @@ topframeOptions.columnconfigure(0, weight=1)
 topframeOptions.rowconfigure(0, weight=1)
 topframeOptions["background"] = "black"
 
+email = StringVar()
+phone = StringVar()
+temperature = StringVar()
+humidity = StringVar()
+
 def buildRefresh():
 
     global topframe
     global topframeOptions
     global homeAlive
     global doorSecLogo
+    global cameraSecLogo
+    global email
+    global phone
+    global temperature
+    global humidity
 
     #Request the status
     response = urllib2.urlopen("http://192.168.1.144")
@@ -79,13 +90,9 @@ def buildRefresh():
 
     parsed_json = json.loads(json_input)
 
-    email = StringVar()
     email = parsed_json['email']
-    phone = StringVar()
     phone = parsed_json['phone']
-    temperature = StringVar()
     temperature = parsed_json['temperature']
-    humidity = StringVar()
     humidity = parsed_json['humidity']
 
 
@@ -278,7 +285,7 @@ def buildRefresh():
 
         for node in parsed_json['camera']:
 
-            name = Camera
+            name = "Camera"
             image = node
 
             #------------------------------------------------------------------------------
@@ -292,7 +299,6 @@ def buildRefresh():
             cameraframe["bd"] = 5
 
             # Camera Logo (find a different one)
-            cameraSecLogo = ImageTk.PhotoImage(Image.open("camera.jpg"))
             cameraSecImage = Label(cameraframe, image=cameraSecLogo)
             cameraSecImage.grid(column=0, row=0, sticky=W)
             cameraSecImage["background"] = "black"
