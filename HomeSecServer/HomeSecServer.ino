@@ -1,6 +1,6 @@
 //-----------------------------------------------------------------------------
 // Filename: HomeSecServer.ino
-// 
+//
 // Description: Arduino code for the WCE Home Security project
 //
 // Notes: Uses the Adafruit CC3000 HTTPServer example code as a base.
@@ -70,7 +70,7 @@
 #include <SD.h>
 #include <Adafruit_VC0706.h>
 #include <SPI.h>
-#include <SoftwareSerial.h>  
+#include <SoftwareSerial.h>
 
 // DHT11 sensor pins
 #define DHTPIN 47
@@ -90,7 +90,8 @@ DHT dht(DHTPIN, DHTTYPE);
 Adafruit_CC3000 cc3000 = Adafruit_CC3000(ADAFRUIT_CC3000_CS, ADAFRUIT_CC3000_IRQ, ADAFRUIT_CC3000_VBAT,
                                          SPI_CLOCK_DIVIDER);
 
-#define WLAN_SSID       ""   // cannot be longer than 32 characters!
+// cannot be longer than 32 characters!
+#define WLAN_SSID       ""
 #define WLAN_PASS       ""
 
 // Security can be WLAN_SEC_UNSEC, WLAN_SEC_WEP, WLAN_SEC_WPA or WLAN_SEC_WPA2
@@ -126,6 +127,7 @@ Adafruit_CC3000 cc3000 = Adafruit_CC3000(ADAFRUIT_CC3000_CS, ADAFRUIT_CC3000_IRQ
 // SD card chip select
 #define chipSelect 45
 
+// Camera Comms
 Adafruit_VC0706 cam = Adafruit_VC0706(&Serial2);
 
 // HTTP Server
@@ -152,7 +154,7 @@ uint64_t serial_nums [MAX_DOORS];
 DynamicJsonBuffer jsonBuffer;
 JsonObject& root = jsonBuffer.createObject();
 
-// XBee Coms
+// XBee Comms
 XBee xbee = XBee();
 ZBRxIoSampleResponse ioSample = ZBRxIoSampleResponse();
 XBeeAddress64 test = XBeeAddress64();
@@ -169,14 +171,14 @@ void setup(void)
   Serial.begin(9600);
   Serial1.begin(9600);
   xbee.setSerial(Serial1);
-  Serial.println(F("Hello, CC3000!\n")); 
+  Serial.println(F("Hello, CC3000!\n"));
 
   Serial.print("Free RAM: "); Serial.println(getFreeRam(), DEC);
 
   // Initialize DHT sensor
   Serial.println(F("\nInitialize DHT Sensor"));
   dht.begin();
-  
+
   // Initialise the module
   Serial.println(F("\nInitializing..."));
   if (!cc3000.begin())
@@ -184,20 +186,20 @@ void setup(void)
     Serial.println(F("Couldn't begin()! Check your wiring?"));
     while(1);
   }
-  
+
   Serial.print(F("\nAttempting to connect to ")); Serial.println(WLAN_SSID);
   if (!cc3000.connectToAP(WLAN_SSID, WLAN_PASS, WLAN_SECURITY)) {
     Serial.println(F("Failed!"));
     while(1);
   }
-   
+
   Serial.println(F("Connected!"));
-  
+
   Serial.println(F("Request DHCP"));
   while (!cc3000.checkDHCP())
   {
-    delay(100); // ToDo: Insert a DHCP timeout!
-  }  
+    delay(100);
+  }
 
   // Display the IP address DNS, Gateway, etc.
   while (! displayConnectionDetails()) {
@@ -205,7 +207,7 @@ void setup(void)
   }
 
   numDoorNodes = 0;
-  
+
   // When using hardware SPI, the SS pin MUST be set to an
   // output (even if not connected or used).  If left as a
   // floating input w/SPI on, this can cause lockuppage.
@@ -219,23 +221,23 @@ void setup(void)
 
   Serial.println("VC0706 Camera test");
   pinMode(chipSelect, OUTPUT);
-  
+
   // Set SD card on WiFi off
   digitalWrite(ADAFRUIT_CC3000_CS, HIGH);
   digitalWrite(chipSelect, LOW);
-  
+
   // see if the card is present and can be initialized:
   if (!SD.begin(chipSelect)) {
     Serial.println("Card failed, or not present");
     // don't do anything more:
     return;
-  }  
-  
+  }
+
   // Set SD card off WiFi on
   digitalWrite(chipSelect, HIGH);
   digitalWrite(ADAFRUIT_CC3000_CS, LOW);
-  
-  
+
+
   // Try to locate the camera
   if (cam.begin()) {
     Serial.println("Camera Found:");
@@ -253,35 +255,23 @@ void setup(void)
     Serial.println("-----------------");
   }
 
-  // Set the picture size - you can choose one of 640x480, 320x240 or 160x120 
+  // Set the picture size - you can choose one of 640x480, 320x240 or 160x120
   // Remember that bigger pictures take longer to transmit!
-  
-  //cam.setImageSize(VC0706_640x480);        // biggest
-  cam.setImageSize(VC0706_320x240);        // medium
-  //cam.setImageSize(VC0706_160x120);          // small
-
-  // You can read the size back from the camera (optional, but maybe useful?)
-  uint8_t imgsize = cam.getImageSize();
-  Serial.print("Image size: ");
-  if (imgsize == VC0706_640x480) Serial.println("640x480");
-  if (imgsize == VC0706_320x240) Serial.println("320x240");
-  if (imgsize == VC0706_160x120) Serial.println("160x120");
-
+  cam.setImageSize(VC0706_640x480);        // biggest
 
   //  Motion detection system can alert you when the camera 'sees' motion!
   cam.setMotionDetect(true);           // turn it on
-  //cam.setMotionDetect(false);        // turn it off   (default)
 
   // You can also verify whether motion detection is active!
   Serial.print("Motion detection is ");
-  if (cam.getMotionDetect()) 
+  if (cam.getMotionDetect())
     Serial.println("ON");
-  else 
+  else
     Serial.println("OFF");
-  
+
   // Start listening for connections
   httpServer.begin();
-  
+
   Serial.println(F("Listening for connections..."));
 }
 
@@ -304,25 +294,26 @@ void loop(void)
 
   // Update the Camera
   CameraComsLoop();
-  
+
   // Try to get a client which is connected.
   Adafruit_CC3000_ClientRef client = httpServer.available();
   if (client) {
     Serial.println(F("Client connected."));
+
     // Process this request until it completes or times out.
     // Note that this is explicitly limited to handling one request at a time!
 
     // Clear the incoming data buffer and point to the beginning of it.
     bufindex = 0;
     memset(&buffer, 0, sizeof(buffer));
-    
+
     // Clear action and path strings.
     memset(&action, 0, sizeof(action));
     memset(&path,   0, sizeof(path));
 
     // Set a timeout for reading all the incoming data.
     unsigned long endtime = millis() + TIMEOUT_MS;
-    
+
     // Read all the incoming data until it can be parsed or the timeout expires.
     bool parsed = false;
     while (!parsed && (millis() < endtime) && (bufindex < BUFFER_SIZE)) {
@@ -337,24 +328,30 @@ void loop(void)
       Serial.println(F("Processing request"));
       Serial.print(F("Action: ")); Serial.println(action);
       Serial.print(F("Path: ")); Serial.println(path);
+
       // Check the action to see if it was a GET request.
       if (strcmp(action, "GET") == 0) {
+
         // Respond with the path that was accessed.
         // First send the success response code.
         client.fastrprintln(F("HTTP/1.1 200 OK"));
+
         // Then send a few headers to identify the type of data returned and that
         // the connection will not be held open.
         client.fastrprintln(F("Content-Type: text/plain"));
         client.fastrprintln(F("Connection: close"));
         client.fastrprintln(F("Server: Adafruit CC3000"));
+
         // Send an empty line to signal start of body.
         client.fastrprintln(F(""));
+
         // Now send the response data.
         parsePath(path);
         buildStatus();
         root.printTo(client);
       }
       else {
+
         // Unsupported action, respond with an HTTP 405 method not allowed error.
         client.fastrprintln(F("HTTP/1.1 405 Method Not Allowed"));
         client.fastrprintln(F(""));
@@ -378,59 +375,60 @@ void loop(void)
 // Return: none
 //----------------------------------------------------------------------------------------
 void CameraComsLoop() {
+
     if (cam.motionDetected()) {
-        Serial.println("Motion!");   
+        Serial.println("Motion!");
         cam.setMotionDetect(false);
-    
-        if (! cam.takePicture()) 
+
+        if (! cam.takePicture())
             Serial.println("Failed to snap!");
-        else 
+        else
             Serial.println("Picture taken!");
-    
+
         // Set SD card on WiFi off
         digitalWrite(ADAFRUIT_CC3000_CS, HIGH);
         digitalWrite(chipSelect, LOW);
-        
+
         char filename[13];
         strcpy(filename, "IMAGE00.JPG");
         for (int i = 0; i < 100; i++) {
             filename[5] = '0' + i/10;
             filename[6] = '0' + i%10;
+
             // create if does not exist, do not open existing, write, sync after write
             if (! SD.exists(filename)) {
             break;
             }
         }
-        
+
         File imgFile = SD.open(filename, FILE_WRITE);
-        
+
         uint16_t jpglen = cam.frameLength();
         Serial.print(jpglen, DEC);
         Serial.println(" byte image");
-        
+
         Serial.print("Writing image to "); Serial.print(filename);
-        
+
         while (jpglen > 0) {
+
             // read 32 bytes at a time;
             uint8_t *buffer;
-            uint8_t bytesToRead = min(32, jpglen); // change 32 to 64 for a speedup but may not work with all setups!
+            uint8_t bytesToRead = min(32, jpglen);
             buffer = cam.readPicture(bytesToRead);
             imgFile.write(buffer, bytesToRead);
-        
-            //Serial.print("Read ");  Serial.print(bytesToRead, DEC); Serial.println(" bytes");
-        
+
             jpglen -= bytesToRead;
         }
         imgFile.close();
-        
+
         // Set SD card off WiFi on
         digitalWrite(chipSelect, HIGH);
         digitalWrite(ADAFRUIT_CC3000_CS, LOW);
-        
+
         Serial.println("...Done!");
         cam.resumeVideo();
         cam.setMotionDetect(true);
-    }  
+    }
 }
 
 //----------------------------------------------------------------------------------------
@@ -441,7 +439,7 @@ void CameraComsLoop() {
 //----------------------------------------------------------------------------------------
 void XBeeComsLoop() {
 
-  //attempt to read a packet    
+  //attempt to read a packet
   xbee.readPacket();
 
   if (xbee.getResponse().isAvailable()) {
@@ -452,7 +450,7 @@ void XBeeComsLoop() {
 
       uint64_t serialMSB = ioSample.getRemoteAddress64().getMsb();
       uint64_t serialLSB = ioSample.getRemoteAddress64().getLsb();
-      uint64_t serial_num = (serialMSB << 32) | serialLSB; 
+      uint64_t serial_num = (serialMSB << 32) | serialLSB;
 
       // read analog inputs
       for (int i = 0; i <= 4; i++) {
@@ -480,20 +478,16 @@ void XBeeComsLoop() {
             serial_nums[empty] = serial_num;
             doorNodes[empty] = doorStatus;
             numDoorNodes++;
-            //Serial.print("Inserting New Door Node\n\n\n\n\n");
           }
-          //Serial.print("Door Status\n");
-          //Serial.println(doorStatus, BIN);
-          //Serial.print("\n");
         }
       }
-    } 
+    }
     else {
       Serial.print("Expected I/O Sample, but got ");
       Serial.print(xbee.getResponse().getApiId(), HEX);
-    }    
+    }
   } else if (xbee.getResponse().isError()) {
-    Serial.print("Error reading packet.  Error code: ");  
+    Serial.print("Error reading packet.  Error code: ");
     Serial.println(xbee.getResponse().getErrorCode());
   }
 }
@@ -544,7 +538,7 @@ void parsePath(char* path){
       String command(path + str.indexOf("?") + 1);
     }
     else {
-      
+
     }
   }
   else if (str.indexOf("testdoornode") >= 0) {
@@ -600,11 +594,10 @@ void parsePath(char* path){
 // Parameters: none
 // Return: bool, connection status
 //----------------------------------------------------------------------------------------
-
 bool displayConnectionDetails(void)
 {
   uint32_t ipAddress, netmask, gateway, dhcpserv, dnsserv;
-  
+
   if(!cc3000.getIPAddress(&ipAddress, &netmask, &gateway, &dhcpserv, &dnsserv))
   {
     Serial.println(F("Unable to retrieve the IP Address!\r\n"));
